@@ -44,14 +44,6 @@ object SimFrontProxyRepo {
 
     fun all(): List<SimFrontProxyEntity> = dao.all()
 
-    /** Whether any binding exists; the service watches telephony only when one does. */
-    fun hasBindings(): Boolean = try {
-        dao.all().isNotEmpty()
-    } catch (e: Throwable) {
-        Logs.w(e)
-        false
-    }
-
     fun get(id: Long): SimFrontProxyEntity? = if (id > 0) dao.getById(id) else null
 
     /**

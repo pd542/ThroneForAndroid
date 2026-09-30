@@ -16,7 +16,6 @@ import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.SimFrontProxyEntity
 import io.nekohasekai.sagernet.database.SimFrontProxyRepo
 import io.nekohasekai.sagernet.ktx.app
-import io.nekohasekai.sagernet.ktx.needReload
 import io.nekohasekai.sagernet.ui.ProfileSelectActivity
 import io.nekohasekai.sagernet.utils.SimStateAccess
 import kotlinx.coroutines.Dispatchers
@@ -151,8 +150,8 @@ class SimFrontProxySettingsFragment : SettingsScreenFragment(R.xml.settings_sim_
             .setMessage(R.string.sim_front_proxy_clear_confirm)
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 lifecycleScope.launch {
+                    // The service listens for this, so clearing reaches a running proxy on its own.
                     withContext(Dispatchers.IO) { SimFrontProxyRepo.reset() }
-                    needReload()
                     reload()
                 }
             }
@@ -197,7 +196,7 @@ class SimFrontProxySettingsFragment : SettingsScreenFragment(R.xml.settings_sim_
                     )
                 )
             }
-            needReload()
+            // put / reset notify the service, which rebuilds the running config by itself.
             reload()
         }.invokeOnCompletion {
             // Drop the row so the next add starts from the draft again, not from the binding just saved.

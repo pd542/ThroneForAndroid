@@ -227,6 +227,19 @@ class BaseService {
 
         override fun autoSelectorSelect(memberProfileId: Long) = AutoSelectorRuntime.select(memberProfileId)
 
+        /**
+         * A binding added, changed or cleared while the proxy is connected: the front proxy is baked
+         * into the running config, so rebuild it now instead of waiting for the user to restart.
+         * [SimFrontProxyRepo.notifyChanged] is already off the main thread.
+         */
+        private val simFrontProxyListener = object : SimFrontProxyRepo.Listener {
+            override suspend fun simFrontProxiesChanged() {
+                if (data?.state != State.Connected) return
+                Logs.i("SIM front proxy bindings changed, rebuilding the config")
+                AutoSelectorRuntime.restart(this@Interface) { stopRunner(true) }
+            }
+        }
+
         fun stateChanged(s: State, msg: String?) = launch {
             val profileName = profileName
             broadcast { it.stateChanged(s.ordinal, profileName, msg) }
@@ -326,6 +339,8 @@ class BaseService {
             } finally {
                 data.simMonitor = null
             }
+
+            SimFrontProxyRepo.removeListener(simFrontProxyListener)
 
             try {
                 proxy?.close()
@@ -530,20 +545,26 @@ class BaseService {
         /**
          * Switching the SIM changes the front proxy of the running config, which is baked into the core
          * at build time: the only way to apply it is to rebuild the core, so a change restarts the
-         * running profile. Nothing is watched when no SIM binding exists, so a device without SIM
-         * bindings never restarts for telephony noise.
+         * running profile. The telephony monitor runs whenever the proxy does, so a binding added
+         * mid-session takes effect on the next SIM switch; the row listener covers edits that have to
+         * reach a config that is already built, which is what makes a new binding apply without the
+         * user restarting the proxy by hand.
          */
         fun watchSimFrontProxy(proxy: ProxyInstance) {
             this as Context
-            if (!SimFrontProxyRepo.hasBindings()) return
-            data.simMonitor = SimStateAccess.Monitor(this) {
-                runOnDefaultDispatcher {
-                    val running = data.proxy ?: return@runOnDefaultDispatcher
-                    if (data.state != State.Connected) return@runOnDefaultDispatcher
-                    Logs.i("SIM changed, rebuilding the config for the new front proxy")
-                    AutoSelectorRuntime.restart(this@Interface) { stopRunner(true) }
-                }
-            }.also { it.start() }
+            if (data.simMonitor == null) {
+                data.simMonitor = SimStateAccess.Monitor(this) {
+                    runOnDefaultDispatcher {
+                        val running = data.proxy ?: return@runOnDefaultDispatcher
+                        if (data.state != State.Connected) return@runOnDefaultDispatcher
+                        Logs.i("SIM changed, rebuilding the config for the new front proxy")
+                        AutoSelectorRuntime.restart(this@Interface) { stopRunner(true) }
+                    }
+                }.also { it.start() }
+            }
+            // A binding added while the proxy already runs must reach it too, so the running config is
+            // rebuilt as soon as the rows change rather than on the next start.
+            SimFrontProxyRepo.addListener(simFrontProxyListener)
         }
 
         /** Always-on VPN starts the service by itself; without a profile it can only explain why nothing connects. */
