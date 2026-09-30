@@ -59,6 +59,20 @@ class BaseService {
         var wifiMonitor: WifiStateAccess.Monitor? = null
         var simMonitor: SimStateAccess.Monitor? = null
 
+        /**
+         * A binding added, changed or cleared while the proxy is connected: the front proxy is baked
+         * into the running config, so rebuild it now instead of waiting for the user to restart.
+         * [SimFrontProxyRepo] calls this off the main thread. One instance per [Data], so it can be
+         * removed by identity.
+         */
+        val simFrontProxyListener = object : SimFrontProxyRepo.Listener {
+            override suspend fun simFrontProxiesChanged() {
+                if (state != State.Connected) return
+                Logs.i("SIM front proxy bindings changed, rebuilding the config")
+                AutoSelectorRuntime.restart(service) { service.stopRunner(true) }
+            }
+        }
+
         // Pause and wake are JNI calls into the core: run them in order and off the main thread.
         private val idleLock = Mutex()
 
@@ -327,7 +341,7 @@ class BaseService {
                 data.simMonitor = null
             }
 
-            SimFrontProxyRepo.removeListener(simFrontProxyListener)
+            SimFrontProxyRepo.removeListener(data.simFrontProxyListener)
             // The next start resolves the front proxy from scratch; nothing carried over from this session.
             SimFrontProxyRepo.forgetApplied()
 
@@ -532,19 +546,6 @@ class BaseService {
         }
 
         /**
-         * A binding added, changed or cleared while the proxy is connected: the front proxy is baked
-         * into the running config, so rebuild it now instead of waiting for the user to restart.
-         * [SimFrontProxyRepo] calls this off the main thread.
-         */
-        val simFrontProxyListener: SimFrontProxyRepo.Listener = object : SimFrontProxyRepo.Listener {
-            override suspend fun simFrontProxiesChanged() {
-                if (data.state != State.Connected) return
-                Logs.i("SIM front proxy bindings changed, rebuilding the config")
-                AutoSelectorRuntime.restart(this@Interface) { stopRunner(true) }
-            }
-        }
-
-        /**
          * Switching the SIM changes the front proxy of the running config, which is baked into the core
          * at build time: the only way to apply it is to rebuild the core, so a change restarts the
          * running profile. The telephony monitor runs whenever the proxy does, so a binding added
@@ -557,7 +558,6 @@ class BaseService {
             if (data.simMonitor == null) {
                 data.simMonitor = SimStateAccess.Monitor(this) {
                     runOnDefaultDispatcher {
-                        val running = data.proxy ?: return@runOnDefaultDispatcher
                         if (data.state != State.Connected) return@runOnDefaultDispatcher
                         Logs.i("SIM changed, rebuilding the config for the new front proxy")
                         AutoSelectorRuntime.restart(this@Interface) { stopRunner(true) }
@@ -566,7 +566,7 @@ class BaseService {
             }
             // A binding added while the proxy already runs must reach it too, so the running config is
             // rebuilt as soon as the rows change rather than on the next start.
-            SimFrontProxyRepo.addListener(simFrontProxyListener)
+            SimFrontProxyRepo.addListener(data.simFrontProxyListener)
         }
 
         /** Always-on VPN starts the service by itself; without a profile it can only explain why nothing connects. */
