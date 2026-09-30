@@ -541,7 +541,7 @@ class BaseService {
                     val running = data.proxy ?: return@runOnDefaultDispatcher
                     if (data.state != State.Connected) return@runOnDefaultDispatcher
                     Logs.i("SIM changed, rebuilding the config for the new front proxy")
-                    AutoSelectorRuntime.restart(this@Data) { stopRunner(true) }
+                    AutoSelectorRuntime.restart(this@Interface) { stopRunner(true) }
                 }
             }.also { it.start() }
         }

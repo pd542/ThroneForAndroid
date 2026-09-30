@@ -89,7 +89,10 @@ class SimFrontProxySettingsFragment : SettingsScreenFragment(R.xml.settings_sim_
     }
 
     /** The rows, each showing the slot, the carrier and the front proxy it binds. */
-    private fun showBindings(bindings: List<SimFrontProxyEntity>) {
+    private fun showBindings(bindings: List<SimFrontProxyEntity>) = lifecycleScope.launch {
+        val labels = withContext(Dispatchers.IO) {
+            bindings.associate { it.id to profileLabel(it.profileId) }
+        }
         val category = pref<PreferenceCategory>(KEY_LIST)
         category.removeAll()
         category.isVisible = bindings.isNotEmpty()
@@ -98,7 +101,7 @@ class SimFrontProxySettingsFragment : SettingsScreenFragment(R.xml.settings_sim_
                 key = KEY_ROW_PREFIX + binding.id
                 isPersistent = false
                 title = getString(R.string.sim_front_proxy_row, binding.slot, binding.carrierLabel())
-                summary = profileLabel(binding.profileId)
+                summary = labels[binding.id]
                     ?: getString(R.string.sim_front_proxy_missing_profile, binding.profileId)
                 setOnPreferenceClickListener {
                     pickProfile(binding)
