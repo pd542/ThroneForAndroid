@@ -89,7 +89,7 @@ class SimFrontProxySettingsFragment : SettingsScreenFragment(R.xml.settings_sim_
     }
 
     /** The rows, each showing the slot, the carrier and the front proxy it binds. */
-    private fun showBindings(bindings: List<SimFrontProxyEntity>) = lifecycleScope.launch {
+    private suspend fun showBindings(bindings: List<SimFrontProxyEntity>) {
         val labels = withContext(Dispatchers.IO) {
             bindings.associate { it.id to profileLabel(it.profileId) }
         }
@@ -176,7 +176,8 @@ class SimFrontProxySettingsFragment : SettingsScreenFragment(R.xml.settings_sim_
 
     /** Auto selectors are refused, as in the group's front / landing pickers: they move server on their own. */
     private fun onProfilePicked(result: ActivityResult) {
-        val binding = editing ?: return
+        // A pending add has no row yet, so editing stays null; the draft in pendingSlot / pendingCarrier is enough.
+        val binding = editing
         if (result.resultCode != android.app.Activity.RESULT_OK) return
         val id = result.data?.getLongExtra(ProfileSelectActivity.EXTRA_PROFILE_ID, 0L) ?: return
         if (id <= 0) return
@@ -198,6 +199,9 @@ class SimFrontProxySettingsFragment : SettingsScreenFragment(R.xml.settings_sim_
             }
             needReload()
             reload()
+        }.invokeOnCompletion {
+            // Drop the row so the next add starts from the draft again, not from the binding just saved.
+            editing = null
         }
     }
 
