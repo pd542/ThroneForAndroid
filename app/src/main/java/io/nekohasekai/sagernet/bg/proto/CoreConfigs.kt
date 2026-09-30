@@ -25,6 +25,9 @@ import io.nekohasekai.sagernet.utils.SimStateAccess
  */
 object CoreConfigs {
 
+    /** "No front proxy": the generator treats any id <= 0 as unset. */
+    private const val NONE = -1L
+
     /** Stored profiles by id, each row parsed once per generation. */
     private class DatabaseProfiles : ProfileProvider {
         private val cache = HashMap<Long, Outbound?>()
@@ -69,23 +72,38 @@ object CoreConfigs {
      * chained in front of itself, which the generator would happily expand into a self-referencing
      * hop. That is also what makes "the front proxy is the config I am already running" a no-op
      * instead of a duplicated hop.
+     *
+     * An unbound SIM normally keeps the group's front proxy, but a SIM the user moved to from a bound
+     * one cancels it instead: the front proxy is in effect only while the bound SIM is in use.
      */
     private fun resolveFront(groupFront: Long, profileId: Long): Long {
         val bound = try {
             val state = SimStateAccess.read(SagerNet.application)
-            if (!state.available) -1L else SimFrontProxyRepo.resolve(state.slot, state.carrier)
+            if (!state.available) {
+                // No readable SIM (no permission, no subscription): keep the group's front proxy and
+                // forget the last binding, so a SIM that appears later starts from a clean slate.
+                SimFrontProxyRepo.forgetApplied()
+                NONE
+            } else {
+                SimFrontProxyRepo.resolve(state.slot, state.carrier)
+            }
         } catch (e: Throwable) {
             // A binding must never keep the proxy from starting: fall back to the group's slot.
             Logs.w(e)
-            -1L
+            SimFrontProxyRepo.forgetApplied()
+            NONE
         }
-        if (bound <= 0L) return groupFront
+        if (bound <= 0L) {
+            // Left a bound SIM for a SIM with no binding: the front proxy was only meant for the
+            // bound one, so drop it rather than fall back to the group's.
+            return if (SimFrontProxyRepo.shouldClearForUnbound()) NONE else groupFront
+        }
         // The bound profile has to exist, or the generator fails with "missing profile" and the app cannot connect.
         if (ProfileManager.getProfile(bound) == null) {
             Logs.w("SIM front proxy $bound is gone, falling back to the group's front proxy")
             return groupFront
         }
-        if (bound == profileId) return -1L
+        if (bound == profileId) return NONE
         return bound
     }
 }

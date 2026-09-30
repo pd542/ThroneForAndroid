@@ -227,19 +227,6 @@ class BaseService {
 
         override fun autoSelectorSelect(memberProfileId: Long) = AutoSelectorRuntime.select(memberProfileId)
 
-        /**
-         * A binding added, changed or cleared while the proxy is connected: the front proxy is baked
-         * into the running config, so rebuild it now instead of waiting for the user to restart.
-         * [SimFrontProxyRepo.notifyChanged] is already off the main thread.
-         */
-        private val simFrontProxyListener = object : SimFrontProxyRepo.Listener {
-            override suspend fun simFrontProxiesChanged() {
-                if (data?.state != State.Connected) return
-                Logs.i("SIM front proxy bindings changed, rebuilding the config")
-                AutoSelectorRuntime.restart(this@Interface) { stopRunner(true) }
-            }
-        }
-
         fun stateChanged(s: State, msg: String?) = launch {
             val profileName = profileName
             broadcast { it.stateChanged(s.ordinal, profileName, msg) }
@@ -341,6 +328,8 @@ class BaseService {
             }
 
             SimFrontProxyRepo.removeListener(simFrontProxyListener)
+            // The next start resolves the front proxy from scratch; nothing carried over from this session.
+            SimFrontProxyRepo.forgetApplied()
 
             try {
                 proxy?.close()
@@ -539,6 +528,19 @@ class BaseService {
                 PlatformNotifications.cancelWifiRulesInactive(this)
             } else {
                 PlatformNotifications.wifiRulesInactive(this)
+            }
+        }
+
+        /**
+         * A binding added, changed or cleared while the proxy is connected: the front proxy is baked
+         * into the running config, so rebuild it now instead of waiting for the user to restart.
+         * [SimFrontProxyRepo] calls this off the main thread.
+         */
+        val simFrontProxyListener: SimFrontProxyRepo.Listener = object : SimFrontProxyRepo.Listener {
+            override suspend fun simFrontProxiesChanged() {
+                if (data.state != State.Connected) return
+                Logs.i("SIM front proxy bindings changed, rebuilding the config")
+                AutoSelectorRuntime.restart(this@Interface) { stopRunner(true) }
             }
         }
 

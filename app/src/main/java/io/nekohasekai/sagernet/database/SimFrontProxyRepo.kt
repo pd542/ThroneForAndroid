@@ -20,6 +20,16 @@ object SimFrontProxyRepo {
 
     private val listeners = CopyOnWriteArrayList<Listener>()
 
+    /**
+     * The profile the last [resolve] picked, or -1 when the SIM in use was unbound.
+     *
+     * Moving to an unbound SIM has to drop the front proxy the previous SIM asked for, while an
+     * unbound SIM that was never preceded by a bound one keeps the group's own front proxy. Comparing
+     * against this is what tells the two apart, so the state only ever moves forward with a [resolve].
+     */
+    @Volatile
+    private var applied: Long = -1L
+
     private val dao get() = SagerDatabase.simFrontProxyDao
 
     fun addListener(listener: Listener) {
@@ -28,6 +38,10 @@ object SimFrontProxyRepo {
 
     fun removeListener(listener: Listener) {
         listeners.remove(listener)
+    }
+
+    fun forgetApplied() {
+        applied = -1L
     }
 
     private suspend fun notifyChanged() {
@@ -54,6 +68,22 @@ object SimFrontProxyRepo {
      * "SIM 1 + 46000" row wins over a "SIM 1 + any" row.
      */
     fun resolve(slot: Int, carrier: String?): Long {
+        val bound = bindingFor(slot, carrier)
+        applied = bound
+        return bound
+    }
+
+    /**
+     * Whether an unbound SIM should drop the front proxy rather than keep the group's own one.
+     *
+     * True only when the SIM in use changed from a bound one to an unbound one: a device that never
+     * had a match keeps whatever the group configures, which is what a user who never set a binding
+     * expects.
+     */
+    fun shouldClearForUnbound(): Boolean = applied > 0L
+
+    /** The profile of the row matching [slot] / [carrier], or -1. Does not touch [applied]. */
+    fun bindingFor(slot: Int, carrier: String?): Long {
         if (!SimFrontProxyEntity.validSlot(slot)) return -1L
         val candidates = dao.bySlot(slot)
         if (candidates.isEmpty()) return -1L
