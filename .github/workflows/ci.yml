@@ -21,3 +21,11 @@ jobs:
         uses: ./.github/actions/android-build
         with:
           tasks: app:testOssDebugUnitTest app:assembleOssDebug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          # A debug build, so the ABI split APKs land here rather than in dist/.
+          name: Throne-debug-${{ github.sha }}
+          path: app/build/outputs/apk/oss/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
