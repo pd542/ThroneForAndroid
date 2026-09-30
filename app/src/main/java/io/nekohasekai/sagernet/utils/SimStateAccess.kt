@@ -146,11 +146,13 @@ object SimStateAccess {
         fun start() {
             synchronized(this) { last = runCatching { read(context) }.getOrNull() }
             val filter = IntentFilter().apply {
-                if (Build.VERSION.SDK_INT >= 24) {
+                // Both constants only exist from API 34; the services they cover also still broadcast the
+                // older SIM_STATE_CHANGED below, so nothing is missed on an earlier release.
+                if (Build.VERSION.SDK_INT >= 34) {
                     addAction(TelephonyManager.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED)
+                    addAction(TelephonyManager.ACTION_SIM_CARD_STATE_CHANGED)
                 }
                 addAction("android.intent.action.SIM_STATE_CHANGED")
-                addAction(TelephonyManager.ACTION_SIM_CARD_STATE_CHANGED)
             }
             try {
                 if (Build.VERSION.SDK_INT >= 33) {
