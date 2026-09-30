@@ -37,6 +37,12 @@
         app:summary="@string/settings_dns_sum"
         app:title="@string/settings_dns" />
     <Preference
+        app:fragment="io.nekohasekai.sagernet.ui.settings.SimFrontProxySettingsFragment"
+        app:icon="@drawable/ic_communication_phonelink_ring"
+        app:key="settingsSimFrontProxy"
+        app:summary="@string/settings_sim_front_proxy_sum"
+        app:title="@string/settings_sim_front_proxy" />
+    <Preference
         app:fragment="io.nekohasekai.sagernet.ui.settings.PresetSettingsFragment"
         app:icon="@drawable/ic_baseline_tune_24"
         app:key="settingsPresets"

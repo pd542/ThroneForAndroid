@@ -20,9 +20,9 @@ import kotlinx.coroutines.launch
 @Database(
     entities = [
         ProxyGroup::class, ProxyEntity::class, RouteProfileEntity::class, RouteRuleEntity::class,
-        SettingEntry::class, MarkerEntity::class,
+        SettingEntry::class, MarkerEntity::class, SimFrontProxyEntity::class,
     ],
-    version = 12,
+    version = 13,
     autoMigrations = [
         AutoMigration(from = 8, to = 9),
     ]
@@ -144,6 +144,20 @@ abstract class SagerDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * 12 -> 13: the SIM front-proxy bindings. Purely additive: an empty table means every group keeps
+         * its own front proxy, exactly as before.
+         */
+        val MIGRATION_12_13: Migration = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `sim_front_proxies` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`slot` INTEGER NOT NULL DEFAULT -1, `carrier` TEXT NOT NULL DEFAULT '', " +
+                        "`profile_id` INTEGER NOT NULL DEFAULT -1, `display_order` INTEGER NOT NULL DEFAULT 0)"
+                )
+            }
+        }
+
         /** Configs.cpp:35-39: a new database starts with an ordinary group named "Default". */
         private val callback = object : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
@@ -163,7 +177,7 @@ abstract class SagerDatabase : RoomDatabase() {
         @OptIn(DelicateCoroutinesApi::class)
         private fun buildProfileDatabase(): SagerDatabase =
             Room.databaseBuilder(SagerNet.application, SagerDatabase::class.java, Key.DB_PROFILE)
-                .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
                 .addCallback(callback)
                 .setJournalMode(JournalMode.TRUNCATE)
                 .allowMainThreadQueries()
@@ -213,6 +227,7 @@ abstract class SagerDatabase : RoomDatabase() {
         val routeDao get() = instance.routeDao()
         val settingsDao get() = instance.settingsDao()
         val markerDao get() = instance.markerDao()
+        val simFrontProxyDao get() = instance.simFrontProxyDao()
 
     }
 
@@ -221,5 +236,6 @@ abstract class SagerDatabase : RoomDatabase() {
     abstract fun routeDao(): RouteDao
     abstract fun settingsDao(): SettingEntry.Dao
     abstract fun markerDao(): MarkerEntity.Dao
+    abstract fun simFrontProxyDao(): SimFrontProxyEntity.Dao
 
 }

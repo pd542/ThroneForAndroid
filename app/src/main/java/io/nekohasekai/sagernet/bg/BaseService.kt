@@ -22,10 +22,12 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileOrder
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.database.SimFrontProxyRepo
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.outbound.json.jsonObjectOf
 import io.nekohasekai.sagernet.utils.DefaultNetworkListener
 import io.nekohasekai.sagernet.utils.PlatformNotifications
+import io.nekohasekai.sagernet.utils.SimStateAccess
 import io.nekohasekai.sagernet.utils.WifiStateAccess
 import io.throneproj.mobile.Instance
 import kotlinx.coroutines.*
@@ -55,6 +57,7 @@ class BaseService {
         var proxy: ProxyInstance? = null
         var notification: ServiceNotification? = null
         var wifiMonitor: WifiStateAccess.Monitor? = null
+        var simMonitor: SimStateAccess.Monitor? = null
 
         // Pause and wake are JNI calls into the core: run them in order and off the main thread.
         private val idleLock = Mutex()
@@ -317,6 +320,14 @@ class BaseService {
             }
 
             try {
+                data.simMonitor?.stop()
+            } catch (error: Throwable) {
+                recordCleanupFailure("sim-monitor-stop", error)
+            } finally {
+                data.simMonitor = null
+            }
+
+            try {
                 proxy?.close()
                 Logs.i(
                     "ServiceLifecycleTrace serviceId=$serviceId proxyId=$proxyId " +
@@ -516,6 +527,25 @@ class BaseService {
             }
         }
 
+        /**
+         * Switching the SIM changes the front proxy of the running config, which is baked into the core
+         * at build time: the only way to apply it is to rebuild the core, so a change restarts the
+         * running profile. Nothing is watched when no SIM binding exists, so a device without SIM
+         * bindings never restarts for telephony noise.
+         */
+        fun watchSimFrontProxy(proxy: ProxyInstance) {
+            this as Context
+            if (!SimFrontProxyRepo.hasBindings()) return
+            data.simMonitor = SimStateAccess.Monitor(this) {
+                runOnDefaultDispatcher {
+                    val running = data.proxy ?: return@runOnDefaultDispatcher
+                    if (data.state != State.Connected) return@runOnDefaultDispatcher
+                    Logs.i("SIM changed, rebuilding the config for the new front proxy")
+                    AutoSelectorRuntime.restart(this@Data) { stopRunner(true) }
+                }
+            }.also { it.start() }
+        }
+
         /** Always-on VPN starts the service by itself; without a profile it can only explain why nothing connects. */
         fun onNoProfile() {}
 
@@ -595,6 +625,7 @@ class BaseService {
                     startProcesses()
                     data.changeState(State.Connected)
                     runCatching { watchWifiRules(proxy) }.onFailure { Logs.w(it) }
+                    runCatching { watchSimFrontProxy(proxy) }.onFailure { Logs.w(it) }
 
                     lateInit()
                 } catch (_: CancellationException) { // if the job was cancelled, it is canceller's responsibility to call stopRunner
