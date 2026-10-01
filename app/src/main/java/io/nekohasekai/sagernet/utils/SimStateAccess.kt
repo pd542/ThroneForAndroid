@@ -168,19 +168,19 @@ object SimStateAccess {
         private var registeredReceiver = false
         private var registeredCallback = false
 
-        private inner class Callback : ConnectivityManager.NetworkCallback {
-            override fun onAvailable(network: Network) = check("onAvailable")
+        // An anonymous object rather than an inner class: an inner class cannot be constructed in a
+        // property initialiser, because it would have to bind the outer instance there.
+        private val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = onSignal("onAvailable")
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) =
-                check("onCapabilitiesChanged")
+                onSignal("onCapabilitiesChanged")
 
-            override fun onLost(network: Network) = check("onLost")
+            override fun onLost(network: Network) = onSignal("onLost")
         }
-
-        private val callback = Callback()
 
         private val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) =
-                check(intent?.action ?: "broadcast")
+                onSignal(intent?.action ?: "broadcast")
         }
 
         fun start() {
@@ -233,10 +233,10 @@ object SimStateAccess {
             }
         }
 
-        private fun check(why: String) {
+        private fun onSignal(why: String) {
             val state = runCatching { read(context) }.getOrNull()
             if (state == null) {
-                trace("check($why): read threw")
+                trace("onSignal($why): read threw")
                 return
             }
             val changed = synchronized(this) {
@@ -245,10 +245,10 @@ object SimStateAccess {
                 true
             }
             if (!changed) {
-                trace("check($why): unchanged ${state.slot}/${state.carrier}")
+                trace("onSignal($why): unchanged ${state.slot}/${state.carrier}")
                 return
             }
-            trace("check($why): SIM changed -> ${state.slot}/${state.carrier}, rebuilding")
+            trace("onSignal($why): SIM changed -> ${state.slot}/${state.carrier}, rebuilding")
             try {
                 onChange()
             } catch (e: Throwable) {
