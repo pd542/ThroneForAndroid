@@ -68,7 +68,7 @@ class BaseService {
         val simFrontProxyListener = object : SimFrontProxyRepo.Listener {
             override suspend fun simFrontProxiesChanged() {
                 if (state != State.Connected) return
-                Logs.i("SIM front proxy bindings changed, rebuilding the config")
+                service.traceSim("SIM front proxy bindings changed, rebuilding the config")
                 AutoSelectorRuntime.restart(service) { service.stopRunner(true) }
             }
         }
@@ -559,7 +559,7 @@ class BaseService {
                 data.simMonitor = SimStateAccess.Monitor(this) {
                     runOnDefaultDispatcher {
                         if (data.state != State.Connected) return@runOnDefaultDispatcher
-                        Logs.i("SIM changed, rebuilding the config for the new front proxy")
+                        traceSim("SIM changed, rebuilding the config for the new front proxy")
                         AutoSelectorRuntime.restart(this@Interface) { stopRunner(true) }
                     }
                 }.also { it.start() }
@@ -571,6 +571,15 @@ class BaseService {
 
         /** Always-on VPN starts the service by itself; without a profile it can only explain why nothing connects. */
         fun onNoProfile() {}
+
+        /**
+         * Written straight to core.log rather than through [Logs]: a SIM switch has to be diagnosable from
+         * a log export, and every [Logs] call is dropped when log_level is below its level, which hid this
+         * path's lines entirely and made "the monitor never ran" indistinguishable from "it ran quietly".
+         */
+        fun traceSim(message: String) {
+            runCatching { moe.matsuri.nb4a.utils.CoreLog.write("[Debug] [SimFrontProxy] $message") }
+        }
 
         fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
             DataStore.baseService = this

@@ -6,12 +6,18 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Build
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
+import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.ktx.Logs
+import moe.matsuri.nb4a.utils.CoreLog
 
 /**
  * What reading the active data SIM takes, and which SIM is the one currently carrying mobile data.
@@ -76,17 +82,36 @@ object SimStateAccess {
      * with "no SIM" rather than an exception, and the caller falls back to the group's front proxy.
      */
     fun read(context: Context): State {
-        if (!granted(context, Manifest.permission.READ_PHONE_STATE)) return State.NONE
+        if (!granted(context, Manifest.permission.READ_PHONE_STATE)) {
+            trace("read: no READ_PHONE_STATE")
+            return State.NONE
+        }
         val manager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
-            ?: return State.NONE
-        val slot = dataSlot(context, manager) ?: return State.NONE
-        val info = subscriptionForSlot(manager, slot) ?: return State.NONE
+        if (manager == null) {
+            trace("read: no SubscriptionManager")
+            return State.NONE
+        }
+        val slot = dataSlot(context, manager)
+        if (slot == null) {
+            trace("read: dataSlot() = null")
+            return State.NONE
+        }
+        val info = subscriptionForSlot(manager, slot)
+        if (info == null) {
+            trace("read: no subscription for slot $slot")
+            return State.NONE
+        }
         val carrier = if (info.mccString.isNullOrEmpty() || info.mncString.isNullOrEmpty()) {
             ""
         } else {
             info.mccString.orEmpty() + info.mncString.orEmpty()
         }
         return State(slot + 1, carrier, info.carrierName?.toString().orEmpty())
+    }
+
+    /** See [Monitor.trace]: core.log directly, so log_level cannot hide the reason a SIM went unread. */
+    private fun trace(message: String) {
+        runCatching { CoreLog.write("[Debug] [SimStateAccess] $message") }
     }
 
     /** The 0-based slot of the subscription on mobile data, or null. */
@@ -130,21 +155,47 @@ object SimStateAccess {
     /**
      * Calls [onChange] when the SIM behind mobile data changes while the proxy runs.
      *
-     * Two sources are watched, because neither alone is enough: the telephony broadcast is what
-     * actually fires on a SIM switch (the system switches the default data subscription), and the
-     * connectivity callback covers the many devices that never send it.
+     * The connectivity callback is the source that is watched, exactly like [WifiStateAccess.Monitor]
+     * watches the Wi-Fi transport: switching the default data SIM brings up a new cellular network,
+     * which always reaches a registered [ConnectivityManager.NetworkCallback]. The telephony broadcast
+     * is kept as a second, earlier signal, because it fires a moment before the new network is usable.
+     * It has to be registered exported: the broadcast comes from the phone process, not from this app,
+     * and Android 13+ drops anything not from this app from a NOT_EXPORTED receiver.
      */
     class Monitor(private val context: Context, private val onChange: () -> Unit) {
 
         private var last: State? = null
         private var registeredReceiver = false
+        private var registeredCallback = false
+
+        private inner class Callback : ConnectivityManager.NetworkCallback {
+            override fun onAvailable(network: Network) = check("onAvailable")
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) =
+                check("onCapabilitiesChanged")
+
+            override fun onLost(network: Network) = check("onLost")
+        }
+
+        private val callback = Callback()
 
         private val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) = check()
+            override fun onReceive(context: Context?, intent: Intent?) =
+                check(intent?.action ?: "broadcast")
         }
 
         fun start() {
             synchronized(this) { last = runCatching { read(context) }.getOrNull() }
+            trace("monitor start, initial=${last}")
+            val request = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+                .build()
+            try {
+                SagerNet.connectivity.registerNetworkCallback(request, callback)
+                registeredCallback = true
+            } catch (e: Throwable) {
+                Logs.w(e)
+                trace("registerNetworkCallback failed: $e")
+            }
             val filter = IntentFilter().apply {
                 // The telephony action names, spelled out: ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED and
                 // ACTION_SIM_CARD_STATE_CHANGED are not in the SDK's android.telephony.TelephonyManager,
@@ -156,7 +207,9 @@ object SimStateAccess {
             }
             try {
                 if (Build.VERSION.SDK_INT >= 33) {
-                    context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                    // Exported: the sender is the phone process, a different UID, so a NOT_EXPORTED
+                    // receiver never sees it and the switch would only be noticed by the callback above.
+                    context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
                 } else {
                     @Suppress("UnspecifiedRegisterReceiverFlag")
                     context.registerReceiver(receiver, filter)
@@ -164,26 +217,52 @@ object SimStateAccess {
                 registeredReceiver = true
             } catch (e: Throwable) {
                 Logs.w(e)
+                trace("registerReceiver failed: $e")
             }
+            trace("monitor started, callback=$registeredCallback receiver=$registeredReceiver")
         }
 
         fun stop() {
-            if (!registeredReceiver) return
-            registeredReceiver = false
-            runCatching { context.unregisterReceiver(receiver) }
+            if (registeredCallback) {
+                registeredCallback = false
+                runCatching { SagerNet.connectivity.unregisterNetworkCallback(callback) }
+            }
+            if (registeredReceiver) {
+                registeredReceiver = false
+                runCatching { context.unregisterReceiver(receiver) }
+            }
         }
 
-        private fun check() {
-            val state = runCatching { read(context) }.getOrNull() ?: return
-            synchronized(this) {
-                if (state == last) return
-                last = state
+        private fun check(why: String) {
+            val state = runCatching { read(context) }.getOrNull()
+            if (state == null) {
+                trace("check($why): read threw")
+                return
             }
+            val changed = synchronized(this) {
+                if (state == last) return@synchronized false
+                last = state
+                true
+            }
+            if (!changed) {
+                trace("check($why): unchanged ${state.slot}/${state.carrier}")
+                return
+            }
+            trace("check($why): SIM changed -> ${state.slot}/${state.carrier}, rebuilding")
             try {
                 onChange()
             } catch (e: Throwable) {
                 Logs.w(e)
             }
+        }
+
+        /**
+         * Written straight to core.log instead of through [Logs]: the SIM switch is exactly the case that
+         * has to be diagnosable from a log export, and [Logs.i] is dropped whenever log_level is below
+         * "info", which silently hid this monitor's every line.
+         */
+        private fun trace(message: String) {
+            runCatching { CoreLog.write("[Debug] [SimStateAccess] $message") }
         }
     }
 }

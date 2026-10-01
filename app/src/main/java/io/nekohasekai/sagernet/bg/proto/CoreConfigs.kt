@@ -83,13 +83,17 @@ object CoreConfigs {
                 // No readable SIM (no permission, no subscription): keep the group's front proxy and
                 // forget the last binding, so a SIM that appears later starts from a clean slate.
                 SimFrontProxyRepo.forgetApplied()
+                trace("resolve: no readable SIM for profile $profileId, groupFront=$groupFront")
                 NONE
             } else {
-                SimFrontProxyRepo.resolve(state.slot, state.carrier)
+                val resolved = SimFrontProxyRepo.resolve(state.slot, state.carrier)
+                trace("resolve: slot=${state.slot} carrier=${state.carrier} -> bound=$resolved (profile $profileId, groupFront=$groupFront)")
+                resolved
             }
         } catch (e: Throwable) {
             // A binding must never keep the proxy from starting: fall back to the group's slot.
             Logs.w(e)
+            trace("resolve: read threw ${e}, falling back to groupFront=$groupFront")
             SimFrontProxyRepo.forgetApplied()
             NONE
         }
@@ -105,5 +109,10 @@ object CoreConfigs {
         }
         if (bound == profileId) return NONE
         return bound
+    }
+
+    /** See [io.nekohasekai.sagernet.utils.SimStateAccess]: core.log directly, log_level must not hide this. */
+    private fun trace(message: String) {
+        runCatching { moe.matsuri.nb4a.utils.CoreLog.write("[Debug] [CoreConfigs] $message") }
     }
 }
