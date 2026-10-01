@@ -80,8 +80,9 @@ object CoreConfigs {
         val bound = try {
             val state = SimStateAccess.read(SagerNet.application)
             if (!state.available) {
-                // No readable SIM (no permission, no subscription): keep the group's front proxy and
-                // forget the last binding, so a SIM that appears later starts from a clean slate.
+                // No SIM in use (mobile data is not the network carrying traffic, or it cannot be
+                // read): keep the group's front proxy and forget the last binding, so a SIM that
+                // appears later starts from a clean slate.
                 SimFrontProxyRepo.forgetApplied()
                 trace("resolve: no readable SIM for profile $profileId, groupFront=$groupFront")
                 NONE

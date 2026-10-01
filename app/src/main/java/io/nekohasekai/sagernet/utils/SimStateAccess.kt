@@ -86,6 +86,14 @@ object SimStateAccess {
             trace("read: no READ_PHONE_STATE")
             return State.NONE
         }
+        // The default data subscription is a setting, not the network in use: it keeps naming the
+        // bound SIM while Wi-Fi carries the traffic, so the binding would keep applying. The binding
+        // is only meant for the bound SIM's own network, hence nothing to bind when mobile data is
+        // not the network being used.
+        if (!cellularIsTheNetworkInUse(context)) {
+            trace("read: mobile data is not the network in use")
+            return State.NONE
+        }
         val manager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
         if (manager == null) {
             trace("read: no SubscriptionManager")
@@ -112,6 +120,26 @@ object SimStateAccess {
     /** See [Monitor.trace]: core.log directly, so log_level cannot hide the reason a SIM went unread. */
     private fun trace(message: String) {
         runCatching { CoreLog.write("[Debug] [SimStateAccess] $message") }
+    }
+
+    /**
+     * Whether cellular is the network currently carrying traffic.
+     *
+     * [SagerNet.underlyingNetwork] is the network under the VPN, the same source [WifiStateAccess.read]
+     * uses to decide whether Wi-Fi is in use, and it is only set while the proxy runs. Outside that
+     * window the active network is the answer. An unreadable capability is answered with false: keeping
+     * the group's front proxy is the safe answer when the network cannot be told apart.
+     */
+    private fun cellularIsTheNetworkInUse(context: Context): Boolean {
+        val connectivity = SagerNet.connectivity
+        val network = SagerNet.underlyingNetwork ?: connectivity.activeNetwork ?: return false
+        val capabilities = try {
+            connectivity.getNetworkCapabilities(network)
+        } catch (e: Throwable) {
+            Logs.w(e)
+            null
+        } ?: return false
+        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
     }
 
     /** The 0-based slot of the subscription on mobile data, or null. */
