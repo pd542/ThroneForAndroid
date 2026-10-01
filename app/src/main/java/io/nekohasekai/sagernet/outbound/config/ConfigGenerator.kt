@@ -164,13 +164,22 @@ class ConfigGenerator @JvmOverloads constructor(
                     }
                     if (chains.usesXrayCore(hop)) state.proxyUsesXray = true
                 }
+                // The front proxy of a SIM binding is appended as the first hop of every route chain too,
+                // so a rule that names an outbound still leaves through the bound SIM's front proxy.
+                val chainHops = hops.asReversed().toMutableList()
+                if (frontProxyId > 0 && frontProxyId != id && !chainHops.contains(frontProxyId)) {
+                    chainHops.add(frontProxyId)
+                }
                 pre.outboundMap[id] = hopTag(Tags.ROUTE_CHAIN_PREFIX, suffix)
-                pre.routeOutboundGroups.add(hops.asReversed().toList())
-                suffix += hops.size
+                pre.routeOutboundGroups.add(chainHops)
+                suffix += chainHops.size
             } else {
                 if (chains.usesXrayCore(needed)) state.proxyUsesXray = true
-                pre.outboundMap[id] = hopTag(Tags.ROUTE_CHAIN_PREFIX, suffix++)
-                pre.routeOutboundGroups.add(listOf(id))
+                // Same for a single outbound: the bound SIM's front proxy becomes the chain's first hop.
+                val group = if (frontProxyId > 0 && frontProxyId != id) listOf(id, frontProxyId) else listOf(id)
+                pre.outboundMap[id] = hopTag(Tags.ROUTE_CHAIN_PREFIX, suffix)
+                pre.routeOutboundGroups.add(group)
+                suffix += group.size
             }
         }
 
